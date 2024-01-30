@@ -1,113 +1,328 @@
-import Image from "next/image";
+"use client";
+
+import { Button, Spinner, Tab, UploadFile } from "@/components";
+import Papa, { ParseResult } from "papaparse";
+import { uploadDepartments, uploadEmployees, uploadJobs } from "./actions";
+import { useEffect, useState } from "react";
+
+import clsx from "clsx";
+import { compareArrays } from "@/utils";
+import { toast } from "react-toastify";
+
+interface CSVRow {
+  [key: string]: string;
+}
+
+interface CSVDataAnalysis {
+  quantity: number;
+  batchs: number;
+  errors: CSVRow[];
+}
+
+const headers = {
+  jobs: ["id", "job"],
+  departments: ["id", "department"],
+  employees: ["id", "name", "datetime", "job_id", "department_id"],
+};
+
+const tabs = [
+  {
+    id: 1,
+    label: "Jobs",
+  },
+  {
+    id: 2,
+    label: "Departments",
+  },
+  {
+    id: 3,
+    label: "Employees",
+  },
+];
 
 export default function Home() {
+  const [activeTab, setActiveTab] = useState(1);
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [data, setData] = useState<CSVRow[][]>([]);
+  const [batchSelected, setBatchSelected] = useState<number | null>(null);
+  const [batchsUploaded, setBatchsUploaded] = useState<number>(0);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [batchsUploading, setbatchsUploading] = useState<number | null>(null);
+  const [batchsUploadedList, setbatchsUploadedList] = useState<number[]>([]);
+  const [batchsErrorList, setbatchsErrorList] = useState<number[]>([]);
+
+  const [analysisData, setAnalysisData] = useState<CSVDataAnalysis>({
+    quantity: 0,
+    batchs: 0,
+    errors: [],
+  });
+
+  const processData = (results: ParseResult<CSVRow>) => {
+    if (results.errors.length > 0) {
+      toast.error("El archivo contiene errores");
+      return;
+    }
+    if (results.meta.fields?.length) {
+      if (
+        activeTab === 1 &&
+        !compareArrays(results.meta.fields, headers.jobs)
+      ) {
+        toast.error("El archivo no contiene el formato correcto");
+        setFile(null);
+        setIsLoadingData(false);
+        return;
+      }
+      if (
+        activeTab === 2 &&
+        !compareArrays(results.meta.fields, headers.departments)
+      ) {
+        setFile(null);
+        toast.error("El archivo no contiene el formato correcto");
+        setIsLoadingData(false);
+        return;
+      }
+      if (
+        activeTab === 3 &&
+        !compareArrays(results.meta.fields, headers.employees)
+      ) {
+        setFile(null);
+        toast.error("El archivo no contiene el formato correcto");
+        setIsLoadingData(false);
+        return;
+      }
+    }
+    toast.success("El archivo con formato correcto");
+
+    const dataPlainData = results.data;
+    const quantity = dataPlainData.length;
+    const batchs = Math.ceil(quantity / 1000);
+    const data = [];
+
+    for (let i = 0; i < batchs; i++) {
+      const dataBatch = dataPlainData
+        .map((item) => {
+          if (activeTab === 1 || activeTab === 2) {
+            return { ...item, id: Number(item.id) };
+          }
+          if (activeTab === 3) {
+            return {
+              ...item,
+              id: Number(item.id),
+              datetime: new Date(item.datetime),
+              job_id: Number(item.job_id),
+              department_id: Number(item.department_id),
+            };
+          }
+        })
+        .slice(i * 1000, (i + 1) * 1000);
+      data.push(dataBatch);
+    }
+    setAnalysisData({
+      ...analysisData,
+      quantity,
+      batchs,
+    });
+    setData(data as any);
+
+    setIsLoadingData(false);
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setIsLoadingData(true);
+    const files = event.target.files;
+    if (files && files[0]) {
+      const file = files[0];
+      setFile(file);
+      Papa.parse<CSVRow>(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results: ParseResult<CSVRow>) => {
+          processData(results);
+        },
+      });
+    }
+  };
+
+  const handleDeleteFile = () => {
+    setFile(null);
+  };
+
+  useEffect(() => {
+    if (file) {
+      setData([]);
+      setIsLoadingData(false);
+      setBatchSelected(null);
+      setBatchsUploaded(0);
+      setbatchsUploading(null);
+      setbatchsUploadedList([]);
+      setbatchsErrorList([]);
+
+      setAnalysisData({
+        quantity: 0,
+        batchs: 0,
+        errors: [],
+      });
+    }
+  }, [activeTab]);
+
+  const handleUploadFiles = async () => {
+    setIsUploading(true);
+    for (const batch in data) {
+      setbatchsUploading(Number(batch));
+
+      const response =
+        activeTab === 1
+          ? await uploadJobs({ data: data[batch] as any })
+          : activeTab === 2
+          ? await uploadDepartments({ data: data[batch] as any })
+          : activeTab === 3
+          ? await uploadEmployees({ data: data[batch] as any })
+          : null;
+      console.log(response);
+
+      if (response?.statusCode === 201) {
+        setBatchsUploaded(batchsUploaded + 1);
+        setBatchsUploaded(batchsUploaded + 1);
+        setbatchsUploadedList([...batchsUploadedList, Number(batch)]);
+        toast.success(`Batch ${batch + 1} uploaded`);
+      } else {
+        setBatchsUploaded(batchsUploaded + 1);
+        setbatchsErrorList([...batchsErrorList, Number(batch)]);
+        toast.error(`Batch ${batch + 1} error`);
+      }
+      setbatchsUploading(null);
+      if (Number(batch) > 3) {
+        break;
+      }
+    }
+
+    setIsUploading(false);
+  };
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">src/app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
+    <main className="flex min-h-screen flex-col items-center p-24 gap-10">
+      <header className="">
+        <h1 className="text-5xl font-bold">Datalysis Front</h1>
+      </header>
+      <Tab
+        items={tabs}
+        active={activeTab}
+        onClick={(item) => setActiveTab(item.id)}
+      />
+      <div className="flex flex-col text-center">
+        <span>The format must be:</span>
+        <span className="font-bold">
+          {headers[
+            tabs[activeTab - 1].label.toLowerCase() as keyof typeof headers
+          ].toString()}
+        </span>
+      </div>
+      <UploadFile
+        file={file}
+        handleFileUpload={handleFileUpload}
+        handleDeleteFile={handleDeleteFile}
+      />
+      <div className="w-full">
+        {data.length > 0 ? (
+          <div>
+            <div className="flex gap-10 font-bold">
+              <span>
+                Entries:{" "}
+                <span className="font-normal">{analysisData.quantity}</span>
+              </span>
+              <span>
+                Batchs:{" "}
+                <span className="font-normal">{analysisData.batchs}</span>
+              </span>
+            </div>
+            <div className="flex gap-10 font-bold">
+              <span>
+                Uploaded batchs:{" "}
+                <span className="font-normal">
+                  {batchsUploaded} / {analysisData.batchs}
+                </span>
+              </span>
+            </div>
+            <Button
+              label="Upload batchs"
+              onClick={() => handleUploadFiles()}
+              disabled={isUploading || batchsUploaded === analysisData.batchs}
             />
-          </a>
-        </div>
+            <div>
+              <div className="mt-20">
+                {data.map((batch, index) => (
+                  <div key={index}>
+                    <div className="flex gap-10">
+                      <div>
+                        {batchsUploading == index
+                          ? "Uploading"
+                          : batchsUploadedList.includes(index)
+                          ? "Uploaded"
+                          : batchsErrorList.includes(index)
+                          ? "Error"
+                          : "Pending"}
+                      </div>
+                      <div className="w-[300px]">Batch {index + 1}</div>
+                      <div
+                        className="cursor-pointer text-blue-800"
+                        onClick={() =>
+                          setBatchSelected(
+                            index === batchSelected ? null : index
+                          )
+                        }
+                      >
+                        {index === batchSelected ? "Hide" : "Show"} details
+                      </div>
+                    </div>
+                    <div>
+                      <table
+                        className={clsx({
+                          hidden: batchSelected !== index,
+                          block: batchSelected === index,
+                        })}
+                      >
+                        <thead>
+                          <tr>
+                            {Object.keys(batch[0]).map((item, index3) => (
+                              <th key={`itemhead${index3}`}>{item}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {batch.map((item, index2) => (
+                            <tr key={`mainItem${index2}`}>
+                              {Object.values(item).map((item, index3) => (
+                                <td key={`item${index3}`}>{item.toString()}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div>
+            {isLoadingData ? (
+              <div className="flex items-center justify-center">
+                <Spinner width="20" oneColor color="blue" />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center">
+                <span className="text-gray-500 dark:text-gray-400">
+                  Data is empty
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-full sm:before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full sm:after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 before:lg:h-[360px] z-[-1]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50 text-balance`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
+      {/* <div>{data.length > 0 && <pre>{JSON.stringify(data, null, 2)}</pre>}</div> */}
     </main>
   );
 }
